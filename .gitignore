@@ -1,0 +1,55 @@
+# ==========================
+# Visual Studio
+# ==========================
+.vs/
+**/.vs/
+
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# ==========================
+# Build output (recursive)
+# ==========================
+[Bb]in/
+[Oo]bj/
+
+**/[Bb]in/
+**/[Oo]bj/
+
+[Dd]ebug/
+[Rr]elease/
+
+**/[Dd]ebug/
+**/[Rr]elease/
+
+# ==========================
+# NuGet / packages
+# ==========================
+packages/
+**/packages/
+
+# keep package build targets if needed
+!packages/build/
+
+# ==========================
+# Visual Studio cache
+# ==========================
+.vscode/
+.idea/
+
+_ReSharper*/
+*.DotSettings.user
+
+# ==========================
+# Logs
+# ==========================
+*.log
+
+# ==========================
+# OS files
+# ==========================
+.DS_Store
+Thumbs.db
+desktop.ini
