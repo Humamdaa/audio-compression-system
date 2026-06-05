@@ -27,11 +27,19 @@ namespace WindowsFormsApp1
         // ================= UI =================
         private Button btnSelectFile, btnPlay, btnStop;
         private Button btnCompress, btnReset, btnSave;
+        private Button btnDecompress;
+        private Button btnCancel;
 
         private ComboBox cmbAlgorithm;
         private NumericUpDown numQuantization;
 
         private Label lblOriginalSize, lblProcessedSize, lblCompressionRatio;
+
+        private Panel dropPanel;
+        private Label lblDrop;
+
+        private ProgressBar progressBar;
+        private System.ComponentModel.BackgroundWorker compressionWorker;
 
         // ================ METADATA ==============
         private Label lblFileName;
@@ -73,6 +81,7 @@ namespace WindowsFormsApp1
 
             ApplyTheme();
             StartPosition = FormStartPosition.CenterScreen;
+            AllowDrop = true;
         }
 
         // =====================================================
@@ -80,10 +89,38 @@ namespace WindowsFormsApp1
         // =====================================================
         private void ApplyTheme()
         {
-            BackColor = isDark ? darkBg : lightBg;
-            ForeColor = isDark ? Color.White : Color.Black;
-        }
 
+            Color currentBg = isDark ? darkBg : lightBg;
+            Color currentForeColor = isDark ? Color.White : Color.Black;
+
+
+            BackColor = currentBg;
+            ForeColor = currentForeColor;
+
+
+            foreach (Control ctrl in Controls)
+            {
+ 
+                if (ctrl is ComboBox || ctrl is NumericUpDown)
+                {
+                    ctrl.BackColor = Color.FromArgb(40, 40, 60);
+                    ctrl.ForeColor = Color.White;
+                    continue; 
+                }
+
+                if (ctrl is Label && ctrl != lblDrop)
+                {
+                    ctrl.ForeColor = currentForeColor;
+                }
+
+                else if (ctrl is Panel && ctrl == dropPanel)
+                {
+                    ctrl.BackColor = darkPanel;
+
+                    lblDrop.ForeColor = Color.Gray;
+                }
+            }
+        }
         private void ToggleTheme()
         {
             isDark = !isDark;
@@ -104,16 +141,16 @@ namespace WindowsFormsApp1
             lblBitRate = CreateLabel(20, 295);
             lblCodec = CreateLabel(20, 320);
 
-            btnSelectFile = CreateButton("Load", 20, 20);
-            btnPlay = CreateButton("Play", 140, 20);
-            btnStop = CreateButton("Stop", 260, 20);
-            btnCompress = CreateButton("Compress", 380, 20);
+            btnSelectFile = CreateButton("📥 Load", 20, 20);
+            btnPlay = CreateButton("▶️ Play", 140, 20);
+            btnStop = CreateButton("⏹️ Stop", 260, 20);
+            btnCompress = CreateButton("🗜Compress", 380, 20);
 
-            btnReset = CreateButton("Reset", 520, 20);
-            btnSave = CreateButton("Save", 660, 20);
+            btnReset = CreateButton("↩️ Reset", 500, 20);
+            btnSave = CreateButton("💾 Save", 620, 20);
 
             // THEME SWITCH BUTTON
-            var btnTheme = CreateButton("🌗 Theme", 800, 20);
+            var btnTheme = CreateButton("🌗 Theme", 740, 20);
             btnTheme.Click += (s, e) => ToggleTheme();
 
             Controls.AddRange(new Control[]
@@ -121,6 +158,52 @@ namespace WindowsFormsApp1
                 btnSelectFile, btnPlay, btnStop,
                 btnCompress, btnReset, btnSave, btnTheme
             });
+            btnCancel = CreateButton("🛑 Cancel", 980, 20); 
+            btnCancel.Enabled = false; 
+            Controls.Add(btnCancel);
+
+            dropPanel = new Panel
+            {
+                Location = new Point(20, 100),
+                Size = new Size(250, 50), 
+                BackColor = darkPanel,
+                BorderStyle = BorderStyle.FixedSingle,
+                AllowDrop = true
+            };
+
+            lblDrop = new Label
+            {
+                Text = "📥 Drag & Drop Audio Here",
+                ForeColor = Color.Gray,
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+
+            dropPanel.Controls.Add(lblDrop);
+            Controls.Add(dropPanel);
+
+            btnDecompress = CreateButton("🔓 Decompress", 860, 20);
+            Controls.Add(btnDecompress);
+
+            progressBar = new ProgressBar
+            {
+                Location = new Point(20, 360), 
+                Width = 300,
+                Height = 25,
+                Minimum = 0,
+                Maximum = 100,
+                Value = 0,
+                Visible = false 
+            };
+            Controls.Add(progressBar);
+
+
+            compressionWorker = new System.ComponentModel.BackgroundWorker
+            {
+                WorkerReportsProgress = true, 
+                WorkerSupportsCancellation = true 
+            };
 
             // ================= ALGORITHM =================
             cmbAlgorithm = new ComboBox
@@ -162,12 +245,29 @@ namespace WindowsFormsApp1
             btnPlay.Click += (s, e) => playerService.Play(selectedFilePath);
             btnStop.Click += (s, e) => playerService.Stop();
 
+            btnCancel.Click += (s, e) => {
+                if (compressionWorker.IsBusy)
+                {
+                    compressionWorker.CancelAsync();
+                }
+            };
+
             btnCompress.Click += Compress_Click;
             btnReset.Click += Reset_Click;
             btnSave.Click += Save_Click;
 
             cmbAlgorithm.SelectedIndexChanged += (s, e) => UpdateSettings();
             numQuantization.ValueChanged += (s, e) => UpdateSettings();
+
+
+            dropPanel.DragEnter += DropPanel_DragEnter;
+            dropPanel.DragLeave += DropPanel_DragLeave;
+            dropPanel.DragDrop += DropPanel_DragDrop;
+            btnDecompress.Click += Decompress_Click;
+
+            compressionWorker.DoWork += CompressionWorker_DoWork;
+            compressionWorker.ProgressChanged += CompressionWorker_ProgressChanged;
+            compressionWorker.RunWorkerCompleted += CompressionWorker_RunWorkerCompleted;
         }
 
         // =====================================================
@@ -226,13 +326,13 @@ namespace WindowsFormsApp1
             UpdateSettings();
             SelectService();
 
+
             btnCompress.Enabled = false;
+            progressBar.Value = 0;
+            progressBar.Visible = true;
+            btnCancel.Enabled = true;
 
-            _processedAudio = _compressionService.Compress(_originalAudio, _settings);
-
-            btnCompress.Enabled = true;
-
-            UpdateMetrics();
+            compressionWorker.RunWorkerAsync(_originalAudio);
         }
 
         // =====================================================
@@ -240,12 +340,22 @@ namespace WindowsFormsApp1
         // =====================================================
         private void Reset_Click(object sender, EventArgs e)
         {
+            if (compressionWorker.IsBusy)
+            {
+                compressionWorker.CancelAsync();
+            }
+
             _processedAudio = null;
             _compressionService = null;
 
             UpdateMetrics();
 
-            MessageBox.Show("Reset completed. You can select new algorithm now.");
+            MessageBox.Show("Reset completed. You can select a new algorithm now.");
+        }
+
+        private void Form1_Load(object sender, EventArgs e)
+        {
+
         }
 
         // =====================================================
@@ -308,6 +418,8 @@ namespace WindowsFormsApp1
 
             lblCompressionRatio.Text =
                 processed > 0 ? $"Ratio: {(original / processed):F2}" : "Ratio: N/A";
+
+            btnDecompress.Enabled = _processedAudio != null;
         }
 
         private void ResetMetrics()
@@ -345,11 +457,114 @@ namespace WindowsFormsApp1
             {
                 Location = new Point(x, y),
                 AutoSize = true,
-                ForeColor = Color.White
+                ForeColor = this.ForeColor
             };
 
             Controls.Add(lbl);
             return lbl;
         }
+        private void DropPanel_DragEnter(object sender, DragEventArgs e)
+        {
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                e.Effect = DragDropEffects.Copy;
+                dropPanel.BackColor = accent; 
+            }
+        }
+
+        private void DropPanel_DragLeave(object sender, EventArgs e)
+        {
+            dropPanel.BackColor = darkPanel;
+        }
+
+        private void DropPanel_DragDrop(object sender, DragEventArgs e)
+        {
+            dropPanel.BackColor = darkPanel;
+
+            string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
+
+            if (files.Length > 0)
+            {
+                string file = files[0];
+                string ext = Path.GetExtension(file).ToLower();
+
+                if (ext == ".wav" || ext == ".mp3" || ext == ".aac")
+                {
+                    LoadFile(file);
+                }
+                else
+                {
+                    MessageBox.Show("Unsupported file type.");
+                }
+            }
+        }
+
+        private void Decompress_Click(object sender, EventArgs e)
+        {
+            if (_processedAudio == null)
+            {
+                MessageBox.Show("No compressed audio to decompress.");
+                return;
+            }
+
+            if (_compressionService == null)
+            {
+                MessageBox.Show("Select algorithm first.");
+                return;
+            }
+
+            _processedAudio = _compressionService.Decompress(_processedAudio, _settings);
+
+            UpdateMetrics();
+
+            MessageBox.Show("Decompression completed.");
+        }
+        private void CompressionWorker_DoWork(object sender, System.ComponentModel.DoWorkEventArgs e)
+        {
+            byte[] inputData = (byte[])e.Argument;
+
+            for (int i = 1; i <= 100; i++)
+            {
+                if (compressionWorker.CancellationPending)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+
+                System.Threading.Thread.Sleep(10);
+                compressionWorker.ReportProgress(i);
+            }
+
+            e.Result = _compressionService.Compress(inputData, _settings);
+        }
+
+        private void CompressionWorker_ProgressChanged(object sender, System.ComponentModel.ProgressChangedEventArgs e)
+        {
+            progressBar.Value = e.ProgressPercentage;
+        }
+
+        private void CompressionWorker_RunWorkerCompleted(object sender, System.ComponentModel.RunWorkerCompletedEventArgs e)
+        {
+            if (e.Cancelled)
+            {
+                MessageBox.Show("Compression process was cancelled");
+                progressBar.Visible = false;
+            }
+            else if (e.Error != null)
+            {
+                MessageBox.Show($"An error occurred during compression: {e.Error.Message}");
+            }
+            else
+            {
+                _processedAudio = (byte[])e.Result;
+                UpdateMetrics();
+                MessageBox.Show("Compression completed successfully");
+            }
+
+            btnCompress.Enabled = true;
+            progressBar.Visible = false;
+            btnCancel.Enabled = false;
+        }
+
     }
 }

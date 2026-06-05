@@ -108,6 +108,9 @@
     <Compile Include="Services\Compression\DeltaCompressionService.cs" />
     <Compile Include="Services\Compression\DpcmCompressionService.cs" />
     <Compile Include="Services\Compression\NonlinearQuantizationService.cs" />
+    <EmbeddedResource Include="Form1.resx">
+      <DependentUpon>Form1.cs</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>

@@ -10,19 +10,42 @@ namespace AudioCompressor.Services
             if (input == null || input.Length == 0)
                 return new byte[0];
 
-            byte[] output = new byte[input.Length];
+            int levels = settings.QuantizationLevels; 
+            int step = 256 / levels;
+
+            byte[] output = new byte[(input.Length + 1) / 2];
 
             int prev = 0;
+            int outIndex = 0;
 
-            for (int i = 0; i < input.Length; i++)
+            for (int i = 0; i < input.Length; i += 2)
             {
-                int current = input[i];
+                int packedByte = 0;
 
-                int diff = current - prev;
+                for (int j = 0; j < 2; j++)
+                {
+                    if (i + j >= input.Length) break;
 
-                output[i] = (byte)(diff + 128); // shift to avoid negatives
+                    int current = input[i + j];
+                    int diff = current - prev;
 
-                prev = current;
+ 
+                    int q = diff / step;
+
+   
+                    q = Math.Max(-8, Math.Min(7, q));
+
+                    int encoded = q & 0x0F;
+
+                    if (j == 0)
+                        packedByte |= (encoded << 4);
+                    else
+                        packedByte |= encoded;
+
+                    prev = current;
+                }
+
+                output[outIndex++] = (byte)packedByte;
             }
 
             return output;
@@ -33,21 +56,47 @@ namespace AudioCompressor.Services
             if (input == null || input.Length == 0)
                 return new byte[0];
 
-            byte[] output = new byte[input.Length];
+            int levels = settings.QuantizationLevels; 
+            int step = 256 / levels;
+
+
+            byte[] output = new byte[input.Length * 2];
 
             int prev = 0;
+            int outIndex = 0;
 
             for (int i = 0; i < input.Length; i++)
             {
-                int diff = input[i] - 128;
+                int packedByte = input[i];
 
-                int value = prev + diff;
 
-                value = Math.Max(0, Math.Min(255, value));
+                int encoded1 = (packedByte >> 4) & 0x0F;
+      
+                int q1 = encoded1 >= 8 ? encoded1 - 16 : encoded1;
 
-                output[i] = (byte)value;
 
-                prev = value;
+                int diff1 = q1 * step;
+       
+                int current1 = prev + diff1;
+
+                current1 = Math.Max(0, Math.Min(255, current1));
+                output[outIndex++] = (byte)current1;
+                prev = current1; 
+
+ 
+                int encoded2 = packedByte & 0x0F;
+
+                int q2 = encoded2 >= 8 ? encoded2 - 16 : encoded2;
+
+
+                int diff2 = q2 * step;
+ 
+                int current2 = prev + diff2;
+
+ 
+                current2 = Math.Max(0, Math.Min(255, current2));
+                output[outIndex++] = (byte)current2;
+                prev = current2; 
             }
 
             return output;

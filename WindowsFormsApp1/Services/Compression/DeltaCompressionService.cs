@@ -10,52 +10,83 @@ namespace AudioCompressor.Services
             if (input == null || input.Length == 0)
                 return new byte[0];
 
-            byte[] output = new byte[input.Length];
-
             int step = 1;
+            int prev = 128;
 
-            int prev = 0;
+            int outputSize = (input.Length + 7) / 8;
+            byte[] output = new byte[outputSize];
+
+            int outIndex = 0;
+            int bitPos = 7;
+            byte currentByte = 0;
 
             for (int i = 0; i < input.Length; i++)
             {
                 int current = input[i];
 
+                int bit;
+
                 if (current >= prev)
                 {
-                    output[i] = 1;
+                    bit = 1;
                     prev += step;
                 }
                 else
                 {
-                    output[i] = 0;
+                    bit = 0;
                     prev -= step;
                 }
+
+
+                prev = Math.Max(0, Math.Min(255, prev));
+
+
+                currentByte |= (byte)(bit << bitPos);
+                bitPos--;
+
+                if (bitPos < 0)
+                {
+                    output[outIndex++] = currentByte;
+                    currentByte = 0;
+                    bitPos = 7;
+                }
+            }
+
+ 
+            if (bitPos != 7)
+            {
+                output[outIndex] = currentByte;
             }
 
             return output;
         }
-
         public byte[] Decompress(byte[] input, CompressionSettings settings)
         {
             if (input == null || input.Length == 0)
                 return new byte[0];
 
-            byte[] output = new byte[input.Length];
-
             int step = 1;
-
             int value = 128;
 
-            for (int i = 0; i < input.Length; i++)
+            byte[] output = new byte[input.Length * 8];
+
+            int outIndex = 0;
+
+            foreach (byte b in input)
             {
-                if (input[i] == 1)
-                    value += step;
-                else
-                    value -= step;
+                for (int bitPos = 7; bitPos >= 0; bitPos--)
+                {
+                    int bit = (b >> bitPos) & 1;
 
-                value = Math.Max(0, Math.Min(255, value));
+                    if (bit == 1)
+                        value += step;
+                    else
+                        value -= step;
 
-                output[i] = (byte)value;
+                    value = Math.Max(0, Math.Min(255, value));
+
+                    output[outIndex++] = (byte)value;
+                }
             }
 
             return output;
