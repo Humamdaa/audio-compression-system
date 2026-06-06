@@ -1,4 +1,4 @@
-﻿using System;
+﻿/*using System;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
@@ -566,5 +566,751 @@ namespace WindowsFormsApp1
             btnCancel.Enabled = false;
         }
 
+    }
+}
+*/
+/*
+
+using System;
+using System.ComponentModel;
+using System.Drawing;
+using System.IO;
+using System.Windows.Forms;
+
+using AudioCompressor.Models;
+using AudioCompressor.Services;
+using WindowsFormsApp1.Services;
+using WindowsFormsApp1.UI;
+
+namespace WindowsFormsApp1
+{
+    /// <summary>
+    /// Form1 — thin orchestrator.
+    ///
+    /// Responsibilities:
+    ///   1. Instantiate services (AudioMetadataService, AudioPlayerService)
+    ///   2. Instantiate the four UI sections
+    ///   3. Add section panels to the form
+    ///   4. Wire cross-section events
+    ///   5. Hold application state (_originalAudio, _processedAudio, _compressionService)
+    ///   6. Coordinate BackgroundWorker DoWork / RunWorkerCompleted
+    ///
+    /// No UI construction code lives here.
+    /// </summary>
+    public partial class Form1 : Form
+    {
+        // =====================================================
+        // SERVICES
+        // =====================================================
+        private readonly AudioMetadataService _metadataService;
+        private readonly AudioPlayerService _playerService;
+
+        // =====================================================
+        // APPLICATION STATE
+        // =====================================================
+        private string _selectedFilePath;
+        private byte[] _originalAudio;
+        private byte[] _processedAudio;
+        private IAudioCompressionService _compressionService;
+        private CompressionSettings _lastSettings;
+
+        // =====================================================
+        // UI SECTIONS
+        // =====================================================
+        private FileSection _fileSection;
+        private CompressionSection _compressionSection;
+        private MetadataSection _metadataSection;
+
+        // =====================================================
+        // CONSTRUCTOR
+        // =====================================================
+        public Form1()
+        {
+            _metadataService = new AudioMetadataService();
+            _playerService = new AudioPlayerService();
+
+            InitializeComponent();       // designer-generated (empty partial)
+            ConfigureForm();
+            BuildSections();
+            WireEvents();
+        }
+
+        // =====================================================
+        // FORM CONFIGURATION
+        // =====================================================
+        private void ConfigureForm()
+        {
+            Text = "Audio Compressor Pro";
+            Width = 1020;
+            Height = 760;
+            MinimumSize = new Size(1020, 780);
+            StartPosition = FormStartPosition.CenterScreen;
+            AllowDrop = true;
+            DoubleBuffered = true;
+
+            DesignSystem.ApplyDarkTheme(this);
+        }
+
+        // =====================================================
+        // SECTION CONSTRUCTION
+        // =====================================================
+        private void BuildSections()
+        {
+            int margin = 5;
+            int formWidth = ClientSize.Width;
+            int usableW = formWidth - margin * 2;
+
+            // ── Top toolbar bar (theme toggle lives here) ──────────────
+            BuildTopBar(margin);
+
+            // ── Section vertical positions ────────────────────────────
+            int fileY = 60;
+            int comprY = fileY + 170 + DesignSystem.SectionGap;
+            int metaY = comprY + 210 + DesignSystem.SectionGap;
+
+            // ── File Section ──────────────────────────────────────────
+            _fileSection = new FileSection(margin, fileY, usableW);
+            Controls.Add(_fileSection.Panel);
+
+            // ── Compression Section ───────────────────────────────────
+            _compressionSection = new CompressionSection(margin, comprY, usableW);
+            Controls.Add(_compressionSection.Panel);
+
+            // ── Metadata + Results ────────────────────────────────────
+            int metaW = (int)(usableW * 0.58);
+            int resultsW = usableW - metaW - DesignSystem.SectionGap;
+            int metaH = ClientSize.Height - metaY - margin;
+
+            _metadataSection = new MetadataSection(
+                margin, metaY, metaW, resultsW, metaH);
+
+            Controls.Add(_metadataSection.MetadataPanel);
+            Controls.Add(_metadataSection.ResultsPanel);
+        }
+
+        private void BuildTopBar(int margin)
+        {
+            // App title
+            var title = new Label
+            {
+                Text = "AUDIO COMPRESSOR PRO",
+                Font = new Font("Segoe UI", 11f, FontStyle.Bold),
+                ForeColor = DesignSystem.TextPrimary,
+                BackColor = Color.Transparent,
+                AutoSize = true,
+                Location = new Point(margin, 18)
+            };
+            Controls.Add(title);
+
+            // Theme toggle button (top-right)
+            var btnTheme = DesignSystem.CreateButton("🌗  Theme", ButtonStyle.Ghost);
+            btnTheme.Width = 110;
+            btnTheme.SetBounds(ClientSize.Width - margin - 110, 12, 110, 32);
+            btnTheme.Click += (s, e) => ToggleTheme();
+            Controls.Add(btnTheme);
+
+            // Divider line
+            var div = DesignSystem.CreateSeparator(ClientSize.Width - margin * 2);
+            div.Location = new Point(margin, 52);
+            Controls.Add(div);
+        }
+
+        // =====================================================
+        // EVENT WIRING
+        // =====================================================
+        private void WireEvents()
+        {
+            // File section events
+            _fileSection.FileRequested += (s, path) => LoadFile(path);
+            _fileSection.PlayRequested += (s, e) => _playerService.Play(_selectedFilePath);
+            _fileSection.StopRequested += (s, e) => _playerService.Stop();
+
+            // Compression section events
+            _compressionSection.CompressRequested += OnCompressRequested;
+            _compressionSection.DecompressRequested += OnDecompressRequested;
+            _compressionSection.ResetRequested += OnResetRequested;
+
+            // Metadata / Results section events
+            _metadataSection.SaveRequested += OnSaveRequested;
+
+            // BackgroundWorker — DoWork and RunWorkerCompleted stay in Form1
+            // because they touch application state (_originalAudio, _processedAudio,
+            // _compressionService, _lastSettings).
+            _compressionSection.Worker.DoWork += Worker_DoWork;
+            _compressionSection.Worker.RunWorkerCompleted += Worker_RunWorkerCompleted;
+        }
+
+        // =====================================================
+        // LOAD FILE
+        // =====================================================
+        private void LoadFile(string path)
+        {
+            _selectedFilePath = path;
+            _originalAudio = File.ReadAllBytes(path);
+            _processedAudio = null;
+
+            _fileSection.SetCurrentFile(path);
+            _metadataSection.ClearResults();
+
+            var info = _metadataService.GetAudioInfo(path);
+            _metadataSection.UpdateMetadata(info);
+            _metadataSection.UpdateResults(_originalAudio.Length, 0);
+
+            _compressionSection.SetDecompressEnabled(false);
+        }
+
+        // =====================================================
+        // COMPRESS
+        // =====================================================
+        private void OnCompressRequested(object sender, CompressionRequestArgs e)
+        {
+            if (_originalAudio == null)
+            {
+                MessageBox.Show("Please load an audio file first.",
+                                "No File Loaded",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+                return;
+            }
+
+            _lastSettings = e.Settings;
+            _compressionService = _compressionSection.BuildService();
+
+            _compressionSection.SetBusy();
+            _compressionSection.Worker.RunWorkerAsync(_originalAudio);
+        }
+
+        private void Worker_DoWork(object sender, DoWorkEventArgs e)
+        {
+            byte[] inputData = (byte[])e.Argument;
+            var worker = (BackgroundWorker)sender;
+
+            // Simulate progress reporting (matches original behaviour)
+            for (int i = 1; i <= 100; i++)
+            {
+                if (worker.CancellationPending)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+
+                System.Threading.Thread.Sleep(10);
+                worker.ReportProgress(i);
+            }
+
+            e.Result = _compressionService.Compress(inputData, _lastSettings);
+        }
+
+        private void Worker_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (e.Cancelled)
+            {
+                MessageBox.Show("Compression was cancelled.",
+                                "Cancelled",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+
+                _compressionSection.SetIdle(decompressEnabled: false);
+            }
+            else if (e.Error != null)
+            {
+                MessageBox.Show($"An error occurred during compression:\n{e.Error.Message}",
+                                "Error",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Error);
+
+                _compressionSection.SetIdle(decompressEnabled: false);
+            }
+            else
+            {
+                _processedAudio = (byte[])e.Result;
+
+                _metadataSection.UpdateResults(
+                    _originalAudio.Length,
+                    _processedAudio.Length);
+
+                _compressionSection.SetIdle(decompressEnabled: true);
+
+                MessageBox.Show("Compression completed successfully.",
+                                "Done",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+            }
+        }
+
+        // =====================================================
+        // DECOMPRESS
+        // =====================================================
+        private void OnDecompressRequested(object sender, EventArgs e)
+        {
+            if (_processedAudio == null)
+            {
+                MessageBox.Show("No compressed audio to decompress.",
+                                "Nothing to Decompress",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+                return;
+            }
+
+            if (_compressionService == null)
+            {
+                MessageBox.Show("Please select an algorithm and compress first.",
+                                "No Service",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+                return;
+            }
+
+            _processedAudio = _compressionService.Decompress(_processedAudio, _lastSettings);
+
+            _metadataSection.UpdateResults(
+                _originalAudio?.Length ?? 0,
+                _processedAudio.Length);
+
+            MessageBox.Show("Decompression completed.",
+                            "Done",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
+        }
+
+        // =====================================================
+        // RESET
+        // =====================================================
+        private void OnResetRequested(object sender, EventArgs e)
+        {
+            _processedAudio = null;
+            _compressionService = null;
+            _lastSettings = null;
+
+            _metadataSection.ClearResults();
+
+            if (_originalAudio != null)
+                _metadataSection.UpdateResults(_originalAudio.Length, 0);
+
+            _compressionSection.SetIdle(decompressEnabled: false);
+
+            MessageBox.Show("Reset completed. You can select a new algorithm.",
+                            "Reset",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
+        }
+
+        // =====================================================
+        // SAVE
+        // =====================================================
+        private void OnSaveRequested(object sender, EventArgs e)
+        {
+            if (_processedAudio == null)
+            {
+                MessageBox.Show("Nothing to save.",
+                                "No Processed Audio",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+                return;
+            }
+
+            using (var sfd = new SaveFileDialog
+            {
+                Filter = "Binary File|*.bin|Audio File|*.wav",
+                DefaultExt = "bin",
+                Title = "Save Compressed Audio"
+            })
+            {
+                if (sfd.ShowDialog() == DialogResult.OK)
+                    File.WriteAllBytes(sfd.FileName, _processedAudio);
+            }
+        }
+
+        // =====================================================
+        // THEME TOGGLE
+        // =====================================================
+        private void ToggleTheme()
+        {
+            // Currently full dark; extend DesignSystem if you add a light palette.
+            DesignSystem.ApplyDarkTheme(this);
+        }
+
+        // =====================================================
+        // DESIGNER-REQUIRED HANDLER
+        // Form1.Designer.cs registers:
+        //   this.Load += new System.EventHandler(this.Form1_Load);
+        // The method must exist here to satisfy that wiring.
+        // =====================================================
+        private void Form1_Load(object sender, EventArgs e) { }
+    }
+}
+
+*/
+
+using System;
+using System.ComponentModel;
+using System.Drawing;
+using System.IO;
+using System.Windows.Forms;
+
+using AudioCompressor.Models;
+using AudioCompressor.Services;
+using WindowsFormsApp1.Services;
+using WindowsFormsApp1.UI;
+
+namespace WindowsFormsApp1
+{
+    /// <summary>
+    /// Form1 — thin orchestrator.
+    ///
+    /// Responsibilities:
+    ///   1. Instantiate services (AudioMetadataService, AudioPlayerService)
+    ///   2. Instantiate the four UI sections
+    ///   3. Add section panels to the form
+    ///   4. Wire cross-section events
+    ///   5. Hold application state (_originalAudio, _processedAudio, _compressionService)
+    ///   6. Coordinate BackgroundWorker DoWork / RunWorkerCompleted
+    ///
+    /// No UI construction code lives here.
+    /// </summary>
+    public partial class Form1 : Form
+    {
+        // =====================================================
+        // SERVICES
+        // =====================================================
+        private readonly AudioMetadataService _metadataService;
+        private readonly AudioPlayerService _playerService;
+
+        // =====================================================
+        // THEME
+        // =====================================================
+        private readonly ThemeManager _themeManager = new ThemeManager();
+
+        // =====================================================
+        // APPLICATION STATE
+        // =====================================================
+        private string _selectedFilePath;
+        private byte[] _originalAudio;
+        private byte[] _processedAudio;
+        private IAudioCompressionService _compressionService;
+        private CompressionSettings _lastSettings;
+
+        // =====================================================
+        // UI SECTIONS
+        // =====================================================
+        private FileSection _fileSection;
+        private CompressionSection _compressionSection;
+        private MetadataSection _metadataSection;
+
+        // =====================================================
+        // CONSTRUCTOR
+        // =====================================================
+        public Form1()
+        {
+            _metadataService = new AudioMetadataService();
+            _playerService = new AudioPlayerService();
+
+            InitializeComponent();       // designer-generated (empty partial)
+            ConfigureForm();
+            BuildSections();
+            WireEvents();
+        }
+
+        // =====================================================
+        // FORM CONFIGURATION
+        // =====================================================
+        private void ConfigureForm()
+        {
+            Text = "Audio Compressor Pro";
+            Width = 1020;
+            Height = 780;
+            MinimumSize = new Size(1020, 780);
+            StartPosition = FormStartPosition.CenterScreen;
+            AllowDrop = true;
+            DoubleBuffered = true;
+
+            DesignSystem.ApplyDarkTheme(this);
+        }
+
+        // =====================================================
+        // SECTION CONSTRUCTION
+        // =====================================================
+        private void BuildSections()
+        {
+            int margin = 20;
+            int formWidth = ClientSize.Width;
+            int usableW = formWidth - margin * 2;
+
+            // ── Top toolbar bar (theme toggle lives here) ──────────────
+            BuildTopBar(margin);
+
+            // ── Section vertical positions ────────────────────────────
+            int fileY = 60;
+            int comprY = fileY + 170 + DesignSystem.SectionGap;
+            int metaY = comprY + 210 + DesignSystem.SectionGap;
+
+            // ── File Section ──────────────────────────────────────────
+            _fileSection = new FileSection(margin, fileY, usableW);
+            Controls.Add(_fileSection.Panel);
+
+            // ── Compression Section ───────────────────────────────────
+            _compressionSection = new CompressionSection(margin, comprY, usableW);
+            Controls.Add(_compressionSection.Panel);
+
+            // ── Metadata + Results ────────────────────────────────────
+            int metaW = (int)(usableW * 0.58);
+            int resultsW = usableW - metaW - DesignSystem.SectionGap;
+            int metaH = ClientSize.Height - metaY - margin;
+
+            _metadataSection = new MetadataSection(
+                margin, metaY, metaW, resultsW, metaH);
+
+            Controls.Add(_metadataSection.MetadataPanel);
+            Controls.Add(_metadataSection.ResultsPanel);
+        }
+
+        private void BuildTopBar(int margin)
+        {
+            // App title
+            var title = new Label
+            {
+                Text = "AUDIO COMPRESSOR PRO",
+                Font = new Font("Segoe UI", 11f, FontStyle.Bold),
+                ForeColor = DesignSystem.TextPrimary,
+                BackColor = Color.Transparent,
+                AutoSize = true,
+                Location = new Point(margin, 18)
+            };
+            Controls.Add(title);
+
+            // Theme toggle button (top-right)
+            var btnTheme = DesignSystem.CreateButton("🌗  Theme", ButtonStyle.Ghost);
+            btnTheme.Width = 110;
+            btnTheme.SetBounds(ClientSize.Width - margin - 110, 12, 110, 32);
+            btnTheme.Click += (s, e) => ToggleTheme();
+            Controls.Add(btnTheme);
+
+            // Divider line
+            var div = DesignSystem.CreateSeparator(ClientSize.Width - margin * 2);
+            div.Location = new Point(margin, 52);
+            Controls.Add(div);
+        }
+
+        // =====================================================
+        // EVENT WIRING
+        // =====================================================
+        private void WireEvents()
+        {
+            // File section events
+            _fileSection.FileRequested += (s, path) => LoadFile(path);
+            _fileSection.PlayRequested += (s, e) => _playerService.Play(_selectedFilePath);
+            _fileSection.StopRequested += (s, e) => _playerService.Stop();
+
+            // Compression section events
+            _compressionSection.CompressRequested += OnCompressRequested;
+            _compressionSection.DecompressRequested += OnDecompressRequested;
+            _compressionSection.ResetRequested += OnResetRequested;
+
+            // Metadata / Results section events
+            _metadataSection.SaveRequested += OnSaveRequested;
+
+            // BackgroundWorker — DoWork and RunWorkerCompleted stay in Form1
+            // because they touch application state (_originalAudio, _processedAudio,
+            // _compressionService, _lastSettings).
+            _compressionSection.Worker.DoWork += Worker_DoWork;
+            _compressionSection.Worker.RunWorkerCompleted += Worker_RunWorkerCompleted;
+        }
+
+        // =====================================================
+        // LOAD FILE
+        // =====================================================
+        private void LoadFile(string path)
+        {
+            _selectedFilePath = path;
+            _originalAudio = File.ReadAllBytes(path);
+            _processedAudio = null;
+
+            _fileSection.SetCurrentFile(path);
+            _metadataSection.ClearResults();
+
+            var info = _metadataService.GetAudioInfo(path);
+            _metadataSection.UpdateMetadata(info);
+            _metadataSection.UpdateResults(_originalAudio.Length, 0);
+
+            _compressionSection.SetDecompressEnabled(false);
+        }
+
+        // =====================================================
+        // COMPRESS
+        // =====================================================
+        private void OnCompressRequested(object sender, CompressionRequestArgs e)
+        {
+            if (_originalAudio == null)
+            {
+                MessageBox.Show("Please load an audio file first.",
+                                "No File Loaded",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+                return;
+            }
+
+            _lastSettings = e.Settings;
+            _compressionService = _compressionSection.BuildService();
+
+            _compressionSection.SetBusy();
+            _compressionSection.Worker.RunWorkerAsync(_originalAudio);
+        }
+
+        private void Worker_DoWork(object sender, DoWorkEventArgs e)
+        {
+            byte[] inputData = (byte[])e.Argument;
+            var worker = (BackgroundWorker)sender;
+
+            // Simulate progress reporting (matches original behaviour)
+            for (int i = 1; i <= 100; i++)
+            {
+                if (worker.CancellationPending)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+
+                System.Threading.Thread.Sleep(10);
+                worker.ReportProgress(i);
+            }
+
+            e.Result = _compressionService.Compress(inputData, _lastSettings);
+        }
+
+        private void Worker_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (e.Cancelled)
+            {
+                MessageBox.Show("Compression was cancelled.",
+                                "Cancelled",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+
+                _compressionSection.SetIdle(decompressEnabled: false);
+            }
+            else if (e.Error != null)
+            {
+                MessageBox.Show($"An error occurred during compression:\n{e.Error.Message}",
+                                "Error",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Error);
+
+                _compressionSection.SetIdle(decompressEnabled: false);
+            }
+            else
+            {
+                _processedAudio = (byte[])e.Result;
+
+                _metadataSection.UpdateResults(
+                    _originalAudio.Length,
+                    _processedAudio.Length);
+
+                _compressionSection.SetIdle(decompressEnabled: true);
+
+                MessageBox.Show("Compression completed successfully.",
+                                "Done",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+            }
+        }
+
+        // =====================================================
+        // DECOMPRESS
+        // =====================================================
+        private void OnDecompressRequested(object sender, EventArgs e)
+        {
+            if (_processedAudio == null)
+            {
+                MessageBox.Show("No compressed audio to decompress.",
+                                "Nothing to Decompress",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+                return;
+            }
+
+            if (_compressionService == null)
+            {
+                MessageBox.Show("Please select an algorithm and compress first.",
+                                "No Service",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+                return;
+            }
+
+            _processedAudio = _compressionService.Decompress(_processedAudio, _lastSettings);
+
+            _metadataSection.UpdateResults(
+                _originalAudio?.Length ?? 0,
+                _processedAudio.Length);
+
+            MessageBox.Show("Decompression completed.",
+                            "Done",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
+        }
+
+        // =====================================================
+        // RESET
+        // =====================================================
+        private void OnResetRequested(object sender, EventArgs e)
+        {
+            _processedAudio = null;
+            _compressionService = null;
+            _lastSettings = null;
+
+            _metadataSection.ClearResults();
+
+            if (_originalAudio != null)
+                _metadataSection.UpdateResults(_originalAudio.Length, 0);
+
+            _compressionSection.SetIdle(decompressEnabled: false);
+
+            MessageBox.Show("Reset completed. You can select a new algorithm.",
+                            "Reset",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
+        }
+
+        // =====================================================
+        // SAVE
+        // =====================================================
+        private void OnSaveRequested(object sender, EventArgs e)
+        {
+            if (_processedAudio == null)
+            {
+                MessageBox.Show("Nothing to save.",
+                                "No Processed Audio",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+                return;
+            }
+
+            using (var sfd = new SaveFileDialog
+            {
+                Filter = "Binary File|*.bin|Audio File|*.wav",
+                DefaultExt = "bin",
+                Title = "Save Compressed Audio"
+            })
+            {
+                if (sfd.ShowDialog() == DialogResult.OK)
+                    File.WriteAllBytes(sfd.FileName, _processedAudio);
+            }
+        }
+
+        // =====================================================
+        // THEME TOGGLE
+        // =====================================================
+        private void ToggleTheme()
+        {
+            _themeManager.ToggleTheme(this);
+        }
+
+        // =====================================================
+        // DESIGNER-REQUIRED HANDLER
+        // Form1.Designer.cs registers:
+        //   this.Load += new System.EventHandler(this.Form1_Load);
+        // The method must exist here to satisfy that wiring.
+        // =====================================================
+        private void Form1_Load(object sender, EventArgs e) { }
     }
 }

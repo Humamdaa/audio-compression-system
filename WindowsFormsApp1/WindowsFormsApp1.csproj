@@ -108,6 +108,11 @@
     <Compile Include="Services\Compression\DeltaCompressionService.cs" />
     <Compile Include="Services\Compression\DpcmCompressionService.cs" />
     <Compile Include="Services\Compression\NonlinearQuantizationService.cs" />
+    <Compile Include="UI\CompressionSection.cs" />
+    <Compile Include="UI\DesignSystem.cs" />
+    <Compile Include="UI\FileSection.cs" />
+    <Compile Include="UI\MetadataSection.cs" />
+    <Compile Include="UI\ThemeManager.cs" />
     <EmbeddedResource Include="Form1.resx">
       <DependentUpon>Form1.cs</DependentUpon>
     </EmbeddedResource>
