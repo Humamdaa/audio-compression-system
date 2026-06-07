@@ -1,11 +1,19 @@
-﻿using System;
+using System;
+using System.Diagnostics;
 using AudioCompressor.Models;
 
 namespace AudioCompressor.Services
 {
     public class DeltaCompressionService : IAudioCompressionService
     {
+        // Simple one-shot overload — delegates to the reporting version.
         public byte[] Compress(byte[] input, CompressionSettings settings)
+        {
+            return Compress(input, settings, null, null);
+        }
+
+        public byte[] Compress(byte[] input, CompressionSettings settings,
+                               Action<CompressionProgress> report, Func<bool> isCancelled)
         {
             if (input == null || input.Length == 0)
                 return new byte[0];
@@ -19,6 +27,9 @@ namespace AudioCompressor.Services
             int outIndex = 0;
             int bitPos = 7;
             byte currentByte = 0;
+
+            var sw = Stopwatch.StartNew();
+            int reportInterval = Math.Max(1, input.Length / 100);
 
             for (int i = 0; i < input.Length; i++)
             {
@@ -50,16 +61,27 @@ namespace AudioCompressor.Services
                     currentByte = 0;
                     bitPos = 7;
                 }
+
+                // ---- real-time monitoring + cooperative cancellation ----
+                if (i % reportInterval == 0)
+                {
+                    if (isCancelled != null && isCancelled())
+                        return null;
+
+                    Report(report, sw, i + 1, outIndex, input.Length);
+                }
             }
 
- 
+
             if (bitPos != 7)
             {
                 output[outIndex] = currentByte;
             }
 
+            Report(report, sw, input.Length, output.Length, input.Length);
             return output;
         }
+
         public byte[] Decompress(byte[] input, CompressionSettings settings)
         {
             if (input == null || input.Length == 0)
@@ -90,6 +112,23 @@ namespace AudioCompressor.Services
             }
 
             return output;
+        }
+
+        private static void Report(Action<CompressionProgress> report, Stopwatch sw,
+                                   long inputProcessed, long outputSoFar, long total)
+        {
+            if (report == null) return;
+
+            double elapsed = sw.Elapsed.TotalSeconds;
+            report(new CompressionProgress
+            {
+                Percent = total == 0 ? 100 : (int)(inputProcessed * 100 / total),
+                InputProcessed = inputProcessed,
+                OutputSize = outputSoFar,
+                ElapsedSeconds = elapsed,
+                Ratio = outputSoFar <= 0 ? 0 : (double)inputProcessed / outputSoFar,
+                SpeedMBPerSec = elapsed <= 0 ? 0 : inputProcessed / elapsed / (1024.0 * 1024.0)
+            });
         }
     }
 }

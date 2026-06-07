@@ -43,6 +43,9 @@ namespace WindowsFormsApp1.UI
         /// <summary>Fired when the user clicks Reset.</summary>
         public event EventHandler ResetRequested;
 
+        /// <summary>Fired when the user clicks the Report button.</summary>
+        public event EventHandler ViewReportRequested;
+
         public CompressionSettings CurrentSettings { get; private set; } = new CompressionSettings();
 
         // The worker is exposed so Form1 can wire DoWork and RunWorkerCompleted.
@@ -53,14 +56,21 @@ namespace WindowsFormsApp1.UI
         // =====================================================
         private readonly ComboBox _cmbAlgorithm;
         private readonly NumericUpDown _numQuantization;
+        private readonly ComboBox _cmbSampleRate;
         private readonly Button _btnCompress;
         private readonly Button _btnDecompress;
         private readonly Button _btnCancel;
         private readonly Button _btnReset;
+        private readonly Button _btnReport;
         private readonly ProgressBar _progressBar;
         private readonly Label _lblProgress;
         private readonly Label _lblAlgoCaption;
         private readonly Label _lblQuantCaption;
+        private readonly Label _lblSampleCaption;
+
+        // Common audio sample rates offered in the settings (Requirement 6).
+        private static readonly int[] SampleRates =
+            { 8000, 11025, 16000, 22050, 32000, 44100, 48000 };
 
         // =====================================================
         // CONSTRUCTOR
@@ -105,6 +115,19 @@ namespace WindowsFormsApp1.UI
             _numQuantization.Location = new Point(pad + 200 + gap, row2Y);
             Panel.Controls.Add(_numQuantization);
 
+            // --- Sample rate (Requirement 6: configurable before run) ---
+            int col3X = pad + 200 + gap + 140 + gap;
+
+            _lblSampleCaption = DesignSystem.CreateLabel("Sample Rate (Hz)", LabelStyle.Caption);
+            _lblSampleCaption.SetBounds(col3X, row1Y, 130, DesignSystem.LabelHeight);
+            Panel.Controls.Add(_lblSampleCaption);
+
+            _cmbSampleRate = DesignSystem.CreateComboBox(150);
+            _cmbSampleRate.Location = new Point(col3X, row2Y);
+            _cmbSampleRate.DataSource = SampleRates;
+            _cmbSampleRate.SelectedItem = 44100;
+            Panel.Controls.Add(_cmbSampleRate);
+
             // --- Buttons row ---
             int row3Y = row2Y + bh + gap * 2;
             int btnX = pad;
@@ -129,6 +152,12 @@ namespace WindowsFormsApp1.UI
             _btnReset = DesignSystem.CreateButton("↩  Reset", ButtonStyle.Ghost);
             _btnReset.SetBounds(btnX, row3Y, bw, bh);
             Panel.Controls.Add(_btnReset);
+
+            btnX += bw + gap;
+            _btnReport = DesignSystem.CreateButton("📄  Report", ButtonStyle.Ghost);
+            _btnReport.SetBounds(btnX, row3Y, bw, bh);
+            _btnReport.Enabled = false;
+            Panel.Controls.Add(_btnReport);
 
             // --- Progress row ---
             int row4Y = row3Y + bh + gap + 4;
@@ -155,6 +184,9 @@ namespace WindowsFormsApp1.UI
             // --- Wire control events ---
             _cmbAlgorithm.SelectedIndexChanged += (s, e) => SyncSettings();
             _numQuantization.ValueChanged += (s, e) => SyncSettings();
+            _cmbSampleRate.SelectedIndexChanged += (s, e) => SyncSettings();
+
+            _btnReport.Click += (s, e) => ViewReportRequested?.Invoke(this, EventArgs.Empty);
 
             _btnCompress.Click += OnCompressClick;
             _btnDecompress.Click += (s, e) => DecompressRequested?.Invoke(this, EventArgs.Empty);
@@ -203,6 +235,12 @@ namespace WindowsFormsApp1.UI
             _btnDecompress.Enabled = enabled;
         }
 
+        /// <summary>Enable or disable the Report button.</summary>
+        public void SetReportEnabled(bool enabled)
+        {
+            _btnReport.Enabled = enabled;
+        }
+
         /// <summary>Build and return the current IAudioCompressionService for the selected algorithm.</summary>
         public IAudioCompressionService BuildService()
         {
@@ -232,7 +270,8 @@ namespace WindowsFormsApp1.UI
             CurrentSettings = new CompressionSettings
             {
                 Algorithm = (CompressionAlgorithm)_cmbAlgorithm.SelectedItem,
-                QuantizationLevels = (int)_numQuantization.Value
+                QuantizationLevels = (int)_numQuantization.Value,
+                SampleRate = _cmbSampleRate?.SelectedItem is int sr ? sr : 44100
             };
         }
 

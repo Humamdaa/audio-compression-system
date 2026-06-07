@@ -127,7 +127,7 @@ namespace WindowsFormsApp1.UI
         // =====================================================
         private Panel BuildDropZone(int x, int y, int w, int h)
         {
-            
+
             var zone = new RoundedPanel(6)
             {
                 Location = new Point(x, y),
@@ -144,12 +144,16 @@ namespace WindowsFormsApp1.UI
                 TextAlign = ContentAlignment.MiddleCenter,
                 ForeColor = DesignSystem.TextMuted,
                 Font = new Font("Segoe UI", 8.5f),
-                BackColor = Color.Transparent
+                BackColor = Color.Transparent,
+                // The label fills the zone, so it must accept drops too — otherwise
+                // drag events never reach the panel underneath it.
+                AllowDrop = true
             };
 
             zone.Controls.Add(hint);
 
-            zone.DragEnter += (s, e) =>
+            // Shared drag handlers wired to BOTH the zone and the hint label.
+            DragEventHandler onDragEnter = (s, e) =>
             {
                 if (e.Data.GetDataPresent(DataFormats.FileDrop))
                 {
@@ -159,13 +163,13 @@ namespace WindowsFormsApp1.UI
                 }
             };
 
-            zone.DragLeave += (s, e) =>
+            EventHandler onDragLeave = (s, e) =>
             {
                 zone.BackColor = DesignSystem.BgElevated;
                 hint.ForeColor = DesignSystem.TextMuted;
             };
 
-            zone.DragDrop += (s, e) =>
+            DragEventHandler onDragDrop = (s, e) =>
             {
                 zone.BackColor = DesignSystem.BgElevated;
                 hint.ForeColor = DesignSystem.TextMuted;
@@ -182,6 +186,14 @@ namespace WindowsFormsApp1.UI
                     MessageBox.Show("Unsupported file type. Please use WAV, MP3, or AAC.",
                                     "Invalid File", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             };
+
+            zone.DragEnter += onDragEnter;
+            zone.DragLeave += onDragLeave;
+            zone.DragDrop += onDragDrop;
+
+            hint.DragEnter += onDragEnter;
+            hint.DragLeave += onDragLeave;
+            hint.DragDrop += onDragDrop;
 
             return zone;
         }
